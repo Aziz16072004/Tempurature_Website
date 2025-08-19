@@ -1,0 +1,297 @@
+{%  load static %} 
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FinFlow Dashboard</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
+    />
+        <link rel="stylesheet" href="{% static 'styles/dashboardStyle.css' %}">
+
+  </head>
+  <body>
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="logo">
+        <img src="{% static 'images/smartForGreenLogo.jpg' %}" alt="Smart For Green Logo" width="50px" height="50px" class="logo-image">
+        Smart For Green
+        
+      </div>
+
+      <div class="nav-menu">
+        <a href="#" class="nav-item active">
+          <i class="fas fa-home"></i>
+          <span>Home</span>
+        </a>
+        <a href="#" class="nav-item">
+          <i class="fas fa-user-circle"></i>
+          <span>Account</span>
+        </a>
+        
+        
+      </div>
+
+     
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Header -->
+      <div class="header">
+        <div class="welcome-section">
+          <p class="greeting">Good afternoon, Aziz,</p>
+          <h1 class="welcome-title">IoT Temperature Monitoring Dashboard</h1>
+        </div>
+
+        <div class="header-right">
+          <div class="notification-bell">
+            <i class="fas fa-bell"></i>
+            <!-- <div class="notification-indicator"></div> -->
+          </div>
+
+          <div class="user-profile">
+            <img
+              src={% static 'images/smartForGreenLogo.jpg' %}
+              alt="Alex Morgan"
+              class="profile-pic"
+            />
+          </div>
+
+          <div class="search-bar">
+            <i class="fas fa-search"></i>
+            <input type="text" placeholder="Find transactions..." />
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard Container -->
+      <div class="dashboard-container">
+        <!-- Main Dashboard Content -->
+        <div class="dashboard-main">
+          <!-- Transfer Cards -->
+          
+
+          <!-- TTN Temperature Widget -->
+          <div class="temperature-section">
+            <h3 class="section-title">IoT Temperature Monitor</h3>
+            <div class="temperature-widget">
+              <div class="temperature-display">
+                <div class="temperature-icon">
+                  <i class="fas fa-thermometer-half"></i>
+                </div>
+                <div class="temperature-info">
+                  <div class="temperature-value">
+                    <span id="current-temp">--</span>°C
+                  </div>
+                  <div class="temperature-label">Current Temperature</div>
+                </div>
+              </div>
+              
+              <div class="device-info">
+                <div class="info-item">
+                  <i class="fas fa-microchip"></i>
+                  <span id="device-id">Device: --</span>
+                </div>
+                <div class="info-item">
+                  <i class="fas fa-clock"></i>
+                  <span id="last-update">Last Update: --</span>
+                </div>
+                <div class="info-item">
+                  <i class="fas fa-signal"></i>
+                  <span>Status: <span id="connection-status" class="status-offline">Offline</span></span>
+                </div>
+              </div>
+              
+              <div class="temperature-chart">
+                <canvas id="temperatureChart" width="300" height="100"></canvas>
+              </div>
+            </div>
+          </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JavaScript for Temperature Widget -->
+    <script>
+      // Temperature update functionality
+      let temperatureChart;
+      let temperatureHistory = [];
+      
+      // Initialize temperature chart
+      function initTemperatureChart() {
+        const ctx = document.getElementById('temperatureChart').getContext('2d');
+        temperatureChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [{
+              label: 'Temperature (°C)',
+              data: [],
+              borderColor: '#4270F4',
+              backgroundColor: 'rgba(66, 112, 244, 0.1)',
+              borderWidth: 2,
+              fill: true,
+              tension: 0.4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: false,
+                grid: {
+                  color: 'rgba(0, 0, 0, 0.1)'
+                }
+              },
+              x: {
+                grid: {
+                  color: 'rgba(0, 0, 0, 0.1)'
+                }
+              }
+            },
+            plugins: {
+              legend: {
+                display: false
+              }
+            }
+          }
+        });
+      }
+      
+      // Update temperature data
+      function updateTemperature() {
+        const url = `/api/ttn/temperature/`;
+        fetch(url, { cache: 'no-store' })
+          .then(response => response.json())
+          .then(data => {
+            const hasTemp = data.temperature !== null && data.temperature !== undefined;
+            const isFresh = data.is_fresh === undefined ? true : !!data.is_fresh;
+
+            if (hasTemp) {
+              // Update temperature display (show temperature regardless of freshness)
+              document.getElementById('current-temp').textContent = data.temperature;
+              
+              // Update device info
+              if (data.device_id) {
+                document.getElementById('device-id').textContent = `Device: ${data.device_id}`;
+              }
+              
+              // Update last update time
+              if (data.last_update) {
+                const date = new Date(data.last_update);
+                const formattedDate = date.toLocaleDateString('en-US', { 
+                  month: 'short', 
+                  day: 'numeric' 
+                }) + ', ' + date.toLocaleTimeString('en-US', { 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                });
+                document.getElementById('last-update').textContent = `Last Update: ${formattedDate}`;
+              }
+              
+              // Update connection status based on freshness
+              if (isFresh) {
+                document.getElementById('connection-status').textContent = 'Online';
+                document.getElementById('connection-status').className = 'status-online';
+              } else {
+                document.getElementById('connection-status').textContent = 'Offline';
+                document.getElementById('connection-status').className = 'status-offline';
+              }
+              
+              // Add to chart history
+              const now = new Date();
+              const timeLabel = now.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+              });
+              
+              temperatureHistory.push({
+                time: timeLabel,
+                temp: data.temperature
+              });
+              
+              // Keep only last 10 readings
+              if (temperatureHistory.length > 10) {
+                temperatureHistory.shift();
+              }
+              
+              // Update chart
+              if (temperatureChart) {
+                temperatureChart.data.labels = temperatureHistory.map(item => item.time);
+                temperatureChart.data.datasets[0].data = temperatureHistory.map(item => item.temp);
+                temperatureChart.update();
+              }
+            } else {
+              // No temperature data available
+              document.getElementById('current-temp').textContent = '--';
+              
+              // Check if we have an error message
+              if (data.error) {
+                document.getElementById('connection-status').textContent = 'Error';
+                document.getElementById('connection-status').className = 'status-error';
+                
+                // Show error details in console
+                console.warn('TTN API Error:', data.error, data.message);
+              } else if (data.message) {
+                document.getElementById('connection-status').textContent = 'No Data';
+                document.getElementById('connection-status').className = 'status-offline';
+                
+                // Show message details in console
+                console.info('TTN API Message:', data.message);
+              } else {
+                document.getElementById('connection-status').textContent = 'Offline';
+                document.getElementById('connection-status').className = 'status-offline';
+              }
+              
+              // Update device info if available
+              if (data.device_id) {
+                document.getElementById('device-id').textContent = `Device: ${data.device_id}`;
+              }
+              
+              // Update last update time if available
+              if (data.last_update) {
+                const date = new Date(data.last_update);
+                const formattedDate = date.toLocaleDateString('en-US', { 
+                  month: 'short', 
+                  day: 'numeric' 
+                }) + ', ' + date.toLocaleTimeString('en-US', { 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                });
+                document.getElementById('last-update').textContent = `Last Update: ${formattedDate}`;
+              }
+            }
+          })
+          .catch(error => {
+            console.error('Error fetching temperature data:', error);
+            document.getElementById('connection-status').textContent = 'Error';
+            document.getElementById('connection-status').className = 'status-error';
+            document.getElementById('current-temp').textContent = '--';
+          });
+      }
+      
+      // Initialize chart when page loads
+      document.addEventListener('DOMContentLoaded', function() {
+        // Initialize temperature chart
+        if (typeof Chart !== 'undefined') {
+          initTemperatureChart();
+        }
+        
+        // Update temperature immediately
+        updateTemperature();
+        
+        // Update temperature every 30 seconds
+        setInterval(updateTemperature, 6000);
+      });
+    </script>
+    
+    <!-- Chart.js CDN for temperature chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </body>
+</html>

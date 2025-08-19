@@ -1,0 +1,52 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="{% static 'styles/style.css' %}">
+</head>
+<body> 
+     <div class="container">
+        <div class="card">
+		<div class="card-image">	
+			<h2 class="card-heading">
+				Get started
+				<small>Let us create your account</small>
+			</h2>
+		</div>
+        <form method="POST" action="{% url 'signup' %}" class="card-form">
+            {% csrf_token %}
+            <div class="input">
+                {{ form.fullName }}
+                <label for="{{ form.fullName.id_for_label }}" class="input-label">{{ form.fullName.label }}</label>
+                
+            </div>
+           
+            <div class="input">
+                    {% if messages %}
+                {% for message in messages %}
+                    <p class="error-message"> {{ message }}</p>
+                {% endfor %}
+                {% endif %}
+                {{ form.email }}
+                <label for="{{ form.email.id_for_label }}" class="input-label">{{ form.email.label }}</label>
+                </div>
+
+                <div class="input">
+                    {{ form.password }}
+                    <label for="{{ form.password.id_for_label }}" class="input-label">{{ form.password.label }}</label>
+                </div>
+
+            <div class="action">
+				<input type="submit" value="Get Started"class="action-button"/>
+			</div>
+            </form>
+			<p> you have an account already ?  <a href="{% url 'signin' %}">Sign in</a></p>
+		</div>
+    </div>
+    </div>
+
+</body>
+</html>
