@@ -10,5 +10,6 @@ urlpatterns = [
     path('api/tasks/<int:task_id>/complete/', views.mark_completed, name='complete_task'),
     path('contact/success', views.contact_success_view, name='contact-success'),
     path('api/ttn/temperature/', views.get_ttn_temperature, name='ttn_temperature'),
+    path('api/ttn/payload/send/', views.send_manual_ttn_payload, name='send_manual_payload'),
     path('api/ttn/test/', views.test_ttn_config, name='ttn_test'),
 ]

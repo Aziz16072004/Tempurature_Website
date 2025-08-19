@@ -39,3 +39,6 @@ Your TTN device should send payloads with a `temperature` field in the decoded p
 
 
 
+
+
+

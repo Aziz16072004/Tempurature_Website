@@ -10,7 +10,127 @@
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
     />
         <link rel="stylesheet" href="{% static 'styles/dashboardStyle.css' %}">
-
+    
+    <style>
+      /* Sensor Grid Styles */
+      .sensor-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        margin-bottom: 30px;
+      }
+      
+      .sensor-card {
+        background: white;
+        border-radius: 15px;
+        padding: 25px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      
+      .sensor-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      }
+      
+      .sensor-icon {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: white;
+      }
+      
+      .sensor-card.temperature .sensor-icon {
+        background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+      }
+      
+      .sensor-card.humidity .sensor-icon {
+        background: linear-gradient(135deg, #74b9ff, #0984e3);
+      }
+      
+      .sensor-card.pressure .sensor-icon {
+        background: linear-gradient(135deg, #a29bfe, #6c5ce7);
+      }
+      
+      .sensor-card.gas .sensor-icon {
+        background: linear-gradient(135deg, #00b894, #00a085);
+      }
+      
+      .sensor-info {
+        flex: 1;
+      }
+      
+      .sensor-value {
+        font-size: 28px;
+        font-weight: bold;
+        color: #2d3436;
+        margin-bottom: 5px;
+      }
+      
+      .sensor-label {
+        font-size: 14px;
+        color: #636e72;
+        font-weight: 500;
+      }
+      
+      /* Device Info Styles */
+      .device-info {
+        background: white;
+        border-radius: 15px;
+        padding: 20px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+      }
+      
+      .info-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 15px;
+        font-size: 14px;
+        color: #636e72;
+      }
+      
+      .info-item:last-child {
+        margin-bottom: 0;
+      }
+      
+      .info-item i {
+        width: 20px;
+        color: #4270F4;
+      }
+      
+      /* Status Indicators */
+      .status-online {
+        color: #00b894;
+        font-weight: 600;
+      }
+      
+      .status-offline {
+        color: #636e72;
+        font-weight: 600;
+      }
+      
+      .status-error {
+        color: #e17055;
+        font-weight: 600;
+      }
+      
+      /* Temperature Chart */
+      .temperature-chart {
+        background: white;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+      }
+    </style>
   </head>
   <body>
     <!-- Sidebar -->
@@ -76,38 +196,82 @@
 
           <!-- TTN Temperature Widget -->
           <div class="temperature-section">
-            <h3 class="section-title">IoT Temperature Monitor</h3>
-            <div class="temperature-widget">
-              <div class="temperature-display">
-                <div class="temperature-icon">
+            <h3 class="section-title">IoT Sensor Monitor</h3>
+            
+            <!-- Main Sensor Grid -->
+            <div class="sensor-grid">
+              <!-- Temperature Sensor -->
+              <div class="sensor-card temperature">
+                <div class="sensor-icon">
                   <i class="fas fa-thermometer-half"></i>
                 </div>
-                <div class="temperature-info">
-                  <div class="temperature-value">
+                <div class="sensor-info">
+                  <div class="sensor-value">
                     <span id="current-temp">--</span>°C
                   </div>
-                  <div class="temperature-label">Current Temperature</div>
+                  <div class="sensor-label">Temperature</div>
                 </div>
               </div>
               
-              <div class="device-info">
-                <div class="info-item">
-                  <i class="fas fa-microchip"></i>
-                  <span id="device-id">Device: --</span>
+              <!-- Humidity Sensor -->
+              <div class="sensor-card humidity">
+                <div class="sensor-icon">
+                  <i class="fas fa-tint"></i>
                 </div>
-                <div class="info-item">
-                  <i class="fas fa-clock"></i>
-                  <span id="last-update">Last Update: --</span>
-                </div>
-                <div class="info-item">
-                  <i class="fas fa-signal"></i>
-                  <span>Status: <span id="connection-status" class="status-offline">Offline</span></span>
+                <div class="sensor-info">
+                  <div class="sensor-value">
+                    <span id="current-humidity">--</span>%
+                  </div>
+                  <div class="sensor-label">Humidity</div>
                 </div>
               </div>
               
-              <div class="temperature-chart">
-                <canvas id="temperatureChart" width="300" height="100"></canvas>
+              <!-- Pressure Sensor -->
+              <div class="sensor-card pressure">
+                <div class="sensor-icon">
+                  <i class="fas fa-compress-alt"></i>
+                </div>
+                <div class="sensor-info">
+                  <div class="sensor-value">
+                    <span id="current-pressure">--</span> hPa
+                  </div>
+                  <div class="sensor-label">Pressure</div>
+                </div>
               </div>
+              
+              <!-- Gas Sensor -->
+              <div class="sensor-card gas">
+                <div class="sensor-icon">
+                  <i class="fas fa-wind"></i>
+                </div>
+                <div class="sensor-info">
+                  <div class="sensor-value">
+                    <span id="current-gas">--</span>
+                  </div>
+                  <div class="sensor-label">Gas</div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Device Info Section -->
+            <div class="device-info">
+              <div class="info-item">
+                <i class="fas fa-microchip"></i>
+                <span id="device-id">Device: --</span>
+              </div>
+              <div class="info-item">
+                <i class="fas fa-clock"></i>
+                <span id="last-update">Last Update: --</span>
+              </div>
+              <div class="info-item">
+                <i class="fas fa-signal"></i>
+                <span>Status: <span id="connection-status" class="status-offline">Offline</span></span>
+              </div>
+            </div>
+            
+            <!-- Temperature Chart -->
+            <div class="temperature-chart">
+              <canvas id="temperatureChart" width="300" height="100"></canvas>
             </div>
           </div>
 
@@ -176,6 +340,17 @@
             if (hasTemp) {
               // Update temperature display (show temperature regardless of freshness)
               document.getElementById('current-temp').textContent = data.temperature;
+              
+              // Update other sensor values
+              if (data.humidity !== undefined) {
+                document.getElementById('current-humidity').textContent = data.humidity;
+              }
+              if (data.pressure !== undefined) {
+                document.getElementById('current-pressure').textContent = data.pressure;
+              }
+              if (data.gas !== undefined) {
+                document.getElementById('current-gas').textContent = data.gas;
+              }
               
               // Update device info
               if (data.device_id) {

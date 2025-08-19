@@ -3,12 +3,14 @@ from django.shortcuts import render,redirect
 from .form import UserSignInForm , UserSignUpForm
 from .models import User , Task
 from django.contrib import messages
+from django.views.decorators.csrf import csrf_exempt
 import json
 import requests
 from django.utils import timezone
 from datetime import timedelta
 import sys
 import os
+import base64
 
 # Add the project root to Python path to import ttn_config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -132,206 +134,343 @@ def mark_completed(request, task_id):
         return JsonResponse({'error': 'Invalid request method'}, status=400)
 
 def get_ttn_temperature(request):
-    """API endpoint to get latest temperature data from TTN"""
+    """Fetch latest uplink from TTN and decode all sensor values"""
+    print("=== Starting get_ttn_temperature function ===")
+    
+    if not TTN_API_KEY or TTN_API_KEY.strip().lower() == "your-api-key":
+        print("TTN API key not configured")
+        return JsonResponse({
+            'error': 'TTN API key not configured',
+            'message': 'Please set TTN_API_KEY in ttn_config.py'
+        }, status=400)
+
+    # Fetch more messages to ensure we get the newest one (TTN Storage API returns oldest-first)
+    url = f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}/packages/storage/uplink_message?limit=100"
+    print(f"Making request to: {url}")
+    
+    headers = {
+        "Authorization": f"Bearer {TTN_API_KEY}",
+        "Accept": "application/json",
+        **ADDITIONAL_HEADERS
+    }
+    print(f"Headers: {headers}")
+
     try:
-        # Check if TTN configuration is properly set
-        if not TTN_API_KEY or TTN_API_KEY.strip().lower() == "your-api-key":
+        print("Making HTTP request...")
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        print(f"TTN API Response Status: {response.status_code}")
+        print(f"TTN API Response Headers: {dict(response.headers)}")
+        
+        if response.status_code != 200:
+            print(f"Request failed with status {response.status_code}")
             return JsonResponse({
-                'temperature': None,
-                'device_id': DEVICE_ID,  # Your actual device ID
-                'last_update': None,
-                'rssi': None,
-                'snr': None,
-                'source': 'ttn_api',
-                'error': 'Configuration required',
-                'message': f'Device {DEVICE_ID} and Application {TTN_APPLICATION_ID} are configured, but you need to update TTN_API_KEY in ttn_config.py',
-                'device_info': {
-                    'device_id': DEVICE_ID,
-                    'application_id': TTN_APPLICATION_ID,
-                    'appeui': '1231231231231231',
-                    'deveui': '70B3D57ED00721A2',
-                    'status': 'device_and_app_ready'
-                }
-            }, status=400)
+                'error': 'TTN API request failed',
+                'status_code': response.status_code,
+                'response': response.text
+            }, status=response.status_code)
+
+        # Clean the response text and try to parse JSON
+        response_text = response.text.strip()
+        print(f"Raw TTN response length: {len(response_text)}")
+        print(f"Raw TTN response (first 500 chars): {response_text[:500]}")
+        print(f"Raw TTN response (last 200 chars): {response_text[-200:]}")
         
-        # Try multiple TTN endpoints to find available data
-        # Order: Try data endpoints first, device info last
-        endpoints_to_try = [
-            # 1. Try to get latest uplink message from device storage with FPort 1
-            f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}/packages/storage/uplink_message?f_port=1&limit=1",
-            # 2. Try application-wide storage with FPort 1 filter
-            f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/packages/storage/uplink_message?f_port=1&limit=10",
-            # 3. Try device-specific storage with FPort 1 filter
-            f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}/packages/storage/uplink_message?f_port=1",
-            # 4. Try device-specific storage without FPort filter
-            f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}/packages/storage/uplink_message?limit=1",
-            # 5. Try application-wide storage without FPort filter
-            f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/packages/storage/uplink_message?limit=10",
-            # 6. Device info (fallback - only if no data found)
-            f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}"
-        ]
-        
-        headers = {
-            "Authorization": f"Bearer {TTN_API_KEY}",
-            "Accept": "application/json",
-            **ADDITIONAL_HEADERS
-        }
-        
-        # Try each endpoint until we find data
-        for i, ttn_api_url in enumerate(endpoints_to_try):
-            print(f"Trying endpoint {i+1}: {ttn_api_url}")
+        # Try to find where the JSON ends
+        try:
+            # Try to parse the first valid JSON object
+            import json
+            print("Attempting to parse JSON...")
+            data = json.loads(response_text)
+            print("JSON parsed successfully!")
+        except json.JSONDecodeError as json_error:
+            print(f"JSON decode error: {json_error}")
+            print(f"Full response text: {response_text}")
+            
+            # TTN returns concatenated JSON objects, not a proper array
+            # We need to extract each individual JSON object
+            print("TTN returned concatenated JSON objects, extracting individually...")
+            messages = []
+            current_pos = 0
             
             try:
-                response = requests.get(ttn_api_url, headers=headers, timeout=REQUEST_TIMEOUT)
-                print(f"Endpoint {i+1} - Status: {response.status_code}, Content-Length: {len(response.text)}")
-                
-                if response.status_code == 200 and response.text.strip():
-                    # We found data!
-                    try:
-                        data = response.json()
-                        print(f"Successfully parsed JSON from endpoint {i+1}")
-                        print(f"Data structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-                        
-                        # Handle different response structures
-                        if 'result' in data and 'uplink_message' in data['result']:
-                            # Single uplink message response
-                            uplink = data['result']['uplink_message']
-                            print(f"Found single uplink message from endpoint {i+1}")
-                            return _extract_temperature_data(uplink)
-                            
-                        elif 'result' in data and isinstance(data['result'], list) and len(data['result']) > 0:
-                            # List of messages - find the most recent one
-                            messages = data['result']
-                            print(f"Found {len(messages)} messages from endpoint {i+1}")
-                            
-                            # Sort by timestamp if available, otherwise use first
-                            if messages and 'received_at' in messages[0]:
-                                messages.sort(key=lambda x: x.get('received_at', ''), reverse=True)
-                            
-                            uplink = messages[0]  # Use most recent message
-                            print(f"Using most recent message from {len(messages)} available")
-                            return _extract_temperature_data(uplink)
-                            
-                        elif 'ids' in data and i == 3:  # Only endpoint 4 (device info)
-                            # Device info response - this means no data was found
-                            print(f"Reached device info endpoint - no data available")
-                            return JsonResponse({
-                                'temperature': None,
-                                'device_id': data.get('ids', {}).get('device_id'),
-                                'last_update': data.get('last_seen'),
-                                'rssi': None,
-                                'snr': None,
-                                'source': 'ttn_api',
-                                'message': 'Device found but no uplink messages available',
-                                'endpoint_used': f"endpoint_{i+1}",
-                                'device_status': 'active' if data.get('last_seen') else 'inactive',
-                                'debug_note': 'This endpoint only provides device status, not temperature data'
-                            })
-                        else:
-                            print(f"Unexpected data structure from endpoint {i+1}: {data}")
-                            continue
-                            
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error from endpoint {i+1}: {e}")
-                        continue
-                else:
-                    print(f"Endpoint {i+1} returned no data or error")
-                    continue
+                while current_pos < len(response_text):
+                    # Skip whitespace
+                    while current_pos < len(response_text) and response_text[current_pos].isspace():
+                        current_pos += 1
                     
-            except Exception as e:
-                print(f"Error with endpoint {i+1}: {e}")
-                continue
+                    if current_pos >= len(response_text):
+                        break
+                    
+                    # Find the start of a JSON object
+                    if response_text[current_pos] == '{':
+                        brace_count = 0
+                        start_pos = current_pos
+                        
+                        # Find the complete JSON object
+                        for i in range(current_pos, len(response_text)):
+                            if response_text[i] == '{':
+                                brace_count += 1
+                            elif response_text[i] == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    # Found complete JSON object
+                                    try:
+                                        json_part = response_text[start_pos:i+1]
+                                        parsed_obj = json.loads(json_part)
+                                        if 'result' in parsed_obj:
+                                            messages.append(parsed_obj['result'])
+                                            print(f"Extracted message with timestamp: {parsed_obj['result'].get('received_at', 'unknown')}")
+                                    except json.JSONDecodeError as e:
+                                        print(f"Failed to parse individual JSON object: {e}")
+                                    
+                                    current_pos = i + 1
+                                    break
+                        else:
+                            # Incomplete JSON object, skip to next
+                            current_pos += 1
+                    else:
+                        current_pos += 1
+                
+                if not messages:
+                    return JsonResponse({
+                        'error': 'No valid messages found in TTN response',
+                        'message': 'Could not extract any valid JSON messages',
+                        'response_preview': response_text[:500]
+                    }, status=500)
+                
+                print(f"Successfully extracted {len(messages)} messages")
+                # Continue with the extracted messages
+                data = {'result': messages}
+                
+            except Exception as extract_error:
+                print(f"Error during JSON extraction: {extract_error}")
+                return JsonResponse({
+                    'error': 'JSON extraction failed',
+                    'message': f'Error extracting JSON objects: {str(extract_error)}',
+                    'response_preview': response_text[:500]
+                }, status=500)
+
+        # Debug: Show what we parsed
+        print(f"Parsed data type: {type(data)}")
+        print(f"Parsed data: {data}")
         
-        # If we get here, no endpoint returned usable data
-        return JsonResponse({
-            'temperature': None,
-            'device_id': DEVICE_ID,
-            'last_update': None,
-            'rssi': None,
-            'snr': None,
-            'source': 'ttn_api',
-            'error': 'No data available',
-            'message': 'Tried multiple TTN endpoints but found no uplink messages or temperature data',
-            'debug_info': {
-                'endpoints_tried': endpoints_to_try,
-                'application_id': TTN_APPLICATION_ID,
-                'device_id': DEVICE_ID,
-                'suggestion': 'Check if device has sent any uplink messages recently'
-            }
-        }, status=404)
+        # Handle different response structures
+        if isinstance(data, str):
+            print(f"Data is a string, trying to parse it as JSON")
+            try:
+                data = json.loads(data)
+                print(f"Re-parsed data type: {type(data)}")
+            except json.JSONDecodeError:
+                return JsonResponse({
+                    'error': 'TTN response is a string but not valid JSON',
+                    'message': 'Could not parse TTN string response',
+                    'response_preview': str(data)[:500]
+                }, status=500)
+        
+        if not isinstance(data, dict):
+            return JsonResponse({
+                'error': 'Unexpected TTN response format',
+                'message': f'Expected dict, got {type(data)}',
+                'data_type': str(type(data)),
+                'data_preview': str(data)[:500]
+            }, status=500)
+
+        messages = data.get('result', [])
+        if not messages:
+            return JsonResponse({
+                'message': 'No uplink messages available',
+                'payload': None
+            }, status=404)
+
+        print(f"Raw messages data: {messages}")
+        print(f"Messages type: {type(messages)}")
+        print(f"Messages length: {len(messages)}")
+        
+        # Ensure messages is a list
+        if not isinstance(messages, list):
+            print(f"Messages is not a list, converting...")
+            if isinstance(messages, dict):
+                messages = [messages]
+            else:
+                return JsonResponse({
+                    'error': 'Invalid messages format',
+                    'message': f'Expected list, got {type(messages)}',
+                    'data_type': str(type(messages))
+                }, status=500)
+        
+        print(f"After conversion - Messages length: {len(messages)}")
+        
+        if len(messages) == 0:
+            return JsonResponse({
+                'error': 'No messages found',
+                'message': 'Messages list is empty after processing'
+            }, status=404)
+
+        # Sort messages by timestamp to get the newest one
+        # TTN Storage API returns oldest-first, so we need to sort by received_at
+        def get_timestamp(msg):
+            # Try different timestamp fields
+            timestamp = msg.get('received_at')
+            if not timestamp:
+                rx_metadata = msg.get('rx_metadata', [{}])[0]
+                timestamp = rx_metadata.get('time')
+            return timestamp or ''
+
+        # Debug: Show timestamps before sorting
+        print(f"Found {len(messages)} messages")
+        for i, msg in enumerate(messages):
+            ts = get_timestamp(msg)
+            # Also show the decoded payload if available
+            decoded = msg.get('uplink_message', {}).get('decoded_payload', {})
+            temp = decoded.get('temperature', 'N/A')
+            print(f"Message {i}: timestamp = {ts}, temperature = {temp}")
+
+        # Sort by timestamp descending (newest first)
+        messages.sort(key=get_timestamp, reverse=True)
+        
+        # Debug: Show timestamps after sorting
+        print("After sorting (newest first):")
+        for i, msg in enumerate(messages):
+            ts = get_timestamp(msg)
+            decoded = msg.get('uplink_message', {}).get('decoded_payload', {})
+            temp = decoded.get('temperature', 'N/A')
+            print(f"Message {i}: timestamp = {ts}, temperature = {temp}")
             
-    except requests.exceptions.RequestException as e:
+        uplink = messages[0]  # newest message
+        print(f"Selected NEWEST message with timestamp: {get_timestamp(uplink)}")
+        
+        # Show what we're actually selecting
+        selected_decoded = uplink.get('uplink_message', {}).get('decoded_payload', {})
+        print(f"Selected message decoded payload: {selected_decoded}")
+        
+        # Check if this message has the expected structure
+        if 'uplink_message' not in uplink:
+            print("Message doesn't have uplink_message structure, using message directly")
+            uplink_message = uplink
+        else:
+            uplink_message = uplink['uplink_message']
+            print("Using nested uplink_message structure")
+        
+        # Try to get values from decoded_payload first (if available)
+        decoded_payload = uplink_message.get('decoded_payload', {})
+        print(f"Decoded payload available: {decoded_payload}")
+        
+        if decoded_payload and all(key in decoded_payload for key in ['temperature', 'humidity', 'pressure', 'gas']):
+            print("Using decoded_payload values")
+            temperature = decoded_payload.get('temperature', 0)
+            humidity = decoded_payload.get('humidity', 0)
+            pressure = decoded_payload.get('pressure', 0)
+            gas = decoded_payload.get('gas', 0)
+        else:
+            print("Decoded_payload not complete, trying to decode frm_payload")
+            
+            # Decode frm_payload
+            try:
+                frm_payload_b64 = uplink_message.get('frm_payload')
+                if not frm_payload_b64:
+                    return JsonResponse({
+                        'error': 'No frm_payload found in message',
+                        'message': 'Message structure is different than expected',
+                        'message_structure': uplink_message
+                    }, status=500)
+                    
+                print(f"Found frm_payload: {frm_payload_b64}")
+                payload_bytes = base64.b64decode(frm_payload_b64)
+                print(f"Decoded payload length: {len(payload_bytes)} bytes")
+                
+                # Handle different payload lengths
+                if len(payload_bytes) >= 8:
+                    # Full payload with all sensors
+                    print("Full payload detected, decoding all sensors")
+                    def decode_signed16(high, low):
+                        # Match TTN decoder: big-endian with two's complement
+                        val = (high << 8) | low
+                        if val & 0x8000:
+                            val -= 0x10000
+                        return val / 100.0
+
+                    print(f"Decoding sensors from {len(payload_bytes)} bytes...")
+                    print(f"Payload bytes: {[b for b in payload_bytes]}")
+                    
+                    temperature = decode_signed16(payload_bytes[0], payload_bytes[1])
+                    humidity    = decode_signed16(payload_bytes[2], payload_bytes[3])
+                    pressure    = decode_signed16(payload_bytes[4], payload_bytes[5])
+                    gas         = decode_signed16(payload_bytes[6], payload_bytes[7])
+                    
+                elif len(payload_bytes) >= 2:
+                    # Short payload (like simulated data) - only temperature
+                    print("Short payload detected, decoding only temperature")
+                    def decode_signed16(high, low):
+                        # Match TTN decoder: big-endian with two's complement
+                        val = (high << 8) | low
+                        if val & 0x8000:
+                            val -= 0x10000
+                        return val / 100.0
+                    
+                    temperature = decode_signed16(payload_bytes[0], payload_bytes[1])
+                    humidity = 0.0
+                    pressure = 0.0
+                    gas = 0.0
+                    
+                else:
+                    return JsonResponse({
+                        'error': 'Payload too short',
+                        'message': f'Expected at least 2 bytes, got {len(payload_bytes)}',
+                        'payload_length': len(payload_bytes),
+                        'payload_hex': payload_bytes.hex()
+                    }, status=500)
+                    
+                print(f"Decoded values - Temp: {temperature}, Humidity: {humidity}, Pressure: {pressure}, Gas: {gas}")
+                
+            except Exception as payload_error:
+                print(f"Error processing payload: {payload_error}")
+                return JsonResponse({
+                    'error': 'Payload processing failed',
+                    'message': f'Error decoding payload: {str(payload_error)}',
+                    'payload_data': frm_payload_b64 if 'frm_payload' in locals() else 'Not found'
+                }, status=500)
+
+        # Extract metadata
+        rx_metadata = uplink_message.get('rx_metadata', [{}])[0]
+        rssi = rx_metadata.get('rssi')
+        snr = rx_metadata.get('snr')
+        last_update = uplink_message.get('received_at') or rx_metadata.get('time') or uplink.get('received_at')
+        device_id = uplink.get('device_id') or uplink.get('end_device_ids', {}).get('device_id') or DEVICE_ID
+
         return JsonResponse({
-            'temperature': None,
-            'device_id': None,
-            'last_update': None,
-            'rssi': None,
-            'snr': None,
-            'source': 'ttn_api',
-            'error': 'Network error',
-            'message': str(e)
-        }, status=500)
+            "temperature": temperature,
+            "humidity": humidity,
+            "pressure": pressure,
+            "gas": gas
+        })
+
     except Exception as e:
         return JsonResponse({
-            'temperature': None,
-            'device_id': None,
-            'last_update': None,
-            'rssi': None,
-            'snr': None,
-            'source': 'ttn_api',
             'error': 'Unexpected error',
             'message': str(e)
         }, status=500)
 
 def _extract_temperature_data(uplink):
-    """Helper method to extract temperature data from uplink message"""
-    try:
-        # Get decoded payload
-        decoded_payload = uplink.get('decoded_payload', {})
-        temperature = decoded_payload.get('temperature')
-        
-        # Get device info
-        device_id = uplink.get('end_device_ids', {}).get('device_id')
-        
-        # Get timestamp
-        received_at = uplink.get('received_at')
-        
-        # Get signal quality
-        rx_metadata = uplink.get('rx_metadata', [{}])[0] if uplink.get('rx_metadata') else {}
-        rssi = rx_metadata.get('rssi')
-        snr = rx_metadata.get('snr')
-        
-        if temperature is not None:
-            return JsonResponse({
-                'temperature': temperature,
-                'device_id': device_id,
-                'last_update': received_at,
-                'rssi': rssi,
-                'snr': snr,
-                'source': 'ttn_api'
-            })
-        else:
-            return JsonResponse({
-                'temperature': None,
-                'device_id': device_id,
-                'last_update': received_at,
-                'rssi': rssi,
-                'snr': snr,
-                'source': 'ttn_api',
-                'message': 'No temperature data in payload'
-            })
-    except Exception as e:
-        return JsonResponse({
-            'temperature': None,
-            'device_id': None,
-            'last_update': None,
-            'rssi': None,
-            'snr': None,
-            'source': 'ttn_api',
-            'error': 'Data extraction error',
-            'message': str(e)
-        }, status=500)
+    decoded_payload = uplink.get('decoded_payload', {})
+    temperature = decoded_payload.get('temperature')
 
+    # TTN storage API may not include end_device_ids, so use placeholder or uplink info
+    device_id = uplink.get('device_id') or DEVICE_ID
+
+    # TTN storage API may not include received_at, use 'time' from rx_metadata if available
+    rx_metadata = uplink.get('rx_metadata', [{}])[0] if uplink.get('rx_metadata') else {}
+    rssi = rx_metadata.get('rssi')
+    snr = rx_metadata.get('snr')
+    last_update = uplink.get('received_at') or rx_metadata.get('time') or None
+
+    return JsonResponse({
+        'temperature': temperature,
+        'device_id': device_id,
+        'last_update': last_update,
+        'rssi': rssi,
+        'snr': snr,
+        'source': 'ttn_api'
+    })
 def test_ttn_config(request):
     """Test endpoint to verify TTN configuration and show available data"""
     try:
@@ -433,6 +572,104 @@ def test_ttn_config(request):
                 'status': 'device_and_app_ready'
             }
         }, status=500)
+
+@csrf_exempt
+def send_manual_ttn_payload(request):
+    """Send a manual uplink payload to TTN"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+        
+    if not TTN_API_KEY or TTN_API_KEY.strip().lower() == "your-api-key":
+        return JsonResponse({
+            'error': 'TTN API key not configured',
+            'message': 'Please set TTN_API_KEY in ttn_config.py'
+        }, status=400)
+
+    try:
+        # Get payload data from request
+        data = json.loads(request.body)
+        temperature = data.get('temperature', 25.0)
+        humidity = data.get('humidity', 50.0)
+        pressure = data.get('pressure', 1013.0)
+        gas = data.get('gas', 0.0)
+        
+        # Encode sensor values into bytes
+        def encode_signed16(value):
+            # Convert float to signed 16-bit integer (multiply by 100 for 2 decimal places)
+            # Match TTN decoder: big-endian format
+            int_val = int(value * 100)
+            # Ensure it fits in 16 bits
+            int_val = max(-32768, min(32767, int_val))
+            # Convert to bytes (big-endian to match TTN decoder)
+            return int_val.to_bytes(2, byteorder='big', signed=True)
+        
+        # Create payload bytes
+        payload_bytes = (
+            encode_signed16(temperature) +
+            encode_signed16(humidity) +
+            encode_signed16(pressure) +
+            encode_signed16(gas)
+        )
+        
+        # Encode to base64
+        payload_b64 = base64.b64encode(payload_bytes).decode('utf-8')
+        
+        print(f"Creating manual payload: Temp={temperature}°C, Humidity={humidity}%, Pressure={pressure}hPa, Gas={gas}")
+        print(f"Payload bytes: {[b for b in payload_bytes]}")
+        print(f"Base64 payload: {payload_b64}")
+        
+        # Send to TTN via downlink (simulate uplink)
+        # Note: This creates a simulated uplink in TTN
+        downlink_url = f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}/down/push"
+        
+        downlink_data = {
+            "downlinks": [{
+                "f_port": 1,
+                "frm_payload": payload_b64,
+                "priority": "NORMAL"
+            }]
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {TTN_API_KEY}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **ADDITIONAL_HEADERS
+        }
+        
+        print(f"Sending downlink to TTN...")
+        response = requests.post(downlink_url, headers=headers, json=downlink_data, timeout=REQUEST_TIMEOUT)
+        
+        if response.status_code == 200:
+            return JsonResponse({
+                'message': 'Manual payload sent successfully',
+                'payload': {
+                    'temperature': temperature,
+                    'humidity': humidity,
+                    'pressure': pressure,
+                    'gas': gas
+                },
+                'base64_payload': payload_b64,
+                'ttn_response': response.json()
+            })
+        else:
+            return JsonResponse({
+                'error': 'Failed to send payload to TTN',
+                'status_code': response.status_code,
+                'response': response.text
+            }, status=response.status_code)
+            
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'error': 'Invalid JSON',
+            'message': 'Request body must be valid JSON'
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Unexpected error',
+            'message': str(e)
+        }, status=500)
+
 # def post_new(request):
 #     form = PostForm()
 #     return render(request, 'blog/post_edit.html', {'form': form})
