@@ -90,9 +90,8 @@ def sign_in(request):
                 return redirect('home')
             else:
                 messages.error(request, "Invalid email or password.")
-                print("Invalid login")
         else:
-            print("Form errors:", form.errors)
+            pass
     else:
         form = UserSignInForm()
     return render(request, 'blog/signIn.html', {'form': form})
@@ -103,10 +102,8 @@ def sign_up(request):
             email = form.cleaned_data['email']
             if User.objects.filter(email=email).exists():
                 messages.error(request, "User with this email already exists.")
-                print("User with this email already exists.")
             else:
                 user = form.save()
-                print("Saved user:", user)
                 return redirect('signin')
     else:
         form = UserSignUpForm()
@@ -135,10 +132,8 @@ def mark_completed(request, task_id):
 
 def get_ttn_temperature(request):
     """Fetch latest uplink from TTN and decode all sensor values"""
-    print("=== Starting get_ttn_temperature function ===")
     
     if not TTN_API_KEY or TTN_API_KEY.strip().lower() == "your-api-key":
-        print("TTN API key not configured")
         return JsonResponse({
             'error': 'TTN API key not configured',
             'message': 'Please set TTN_API_KEY in ttn_config.py'
@@ -146,23 +141,17 @@ def get_ttn_temperature(request):
 
     # Fetch more messages to ensure we get the newest one (TTN Storage API returns oldest-first)
     url = f"{TTN_API_BASE_URL}/as/applications/{TTN_APPLICATION_ID}/devices/{DEVICE_ID}/packages/storage/uplink_message?limit=100"
-    print(f"Making request to: {url}")
     
     headers = {
         "Authorization": f"Bearer {TTN_API_KEY}",
         "Accept": "application/json",
         **ADDITIONAL_HEADERS
     }
-    print(f"Headers: {headers}")
 
     try:
-        print("Making HTTP request...")
         response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-        print(f"TTN API Response Status: {response.status_code}")
-        print(f"TTN API Response Headers: {dict(response.headers)}")
         
         if response.status_code != 200:
-            print(f"Request failed with status {response.status_code}")
             return JsonResponse({
                 'error': 'TTN API request failed',
                 'status_code': response.status_code,
@@ -171,24 +160,15 @@ def get_ttn_temperature(request):
 
         # Clean the response text and try to parse JSON
         response_text = response.text.strip()
-        print(f"Raw TTN response length: {len(response_text)}")
-        print(f"Raw TTN response (first 500 chars): {response_text[:500]}")
-        print(f"Raw TTN response (last 200 chars): {response_text[-200:]}")
         
         # Try to find where the JSON ends
         try:
             # Try to parse the first valid JSON object
             import json
-            print("Attempting to parse JSON...")
             data = json.loads(response_text)
-            print("JSON parsed successfully!")
         except json.JSONDecodeError as json_error:
-            print(f"JSON decode error: {json_error}")
-            print(f"Full response text: {response_text}")
-            
             # TTN returns concatenated JSON objects, not a proper array
             # We need to extract each individual JSON object
-            print("TTN returned concatenated JSON objects, extracting individually...")
             messages = []
             current_pos = 0
             
@@ -219,9 +199,8 @@ def get_ttn_temperature(request):
                                         parsed_obj = json.loads(json_part)
                                         if 'result' in parsed_obj:
                                             messages.append(parsed_obj['result'])
-                                            print(f"Extracted message with timestamp: {parsed_obj['result'].get('received_at', 'unknown')}")
                                     except json.JSONDecodeError as e:
-                                        print(f"Failed to parse individual JSON object: {e}")
+                                        pass  # Skip invalid JSON objects
                                     
                                     current_pos = i + 1
                                     break
@@ -238,28 +217,20 @@ def get_ttn_temperature(request):
                         'response_preview': response_text[:500]
                     }, status=500)
                 
-                print(f"Successfully extracted {len(messages)} messages")
                 # Continue with the extracted messages
                 data = {'result': messages}
                 
             except Exception as extract_error:
-                print(f"Error during JSON extraction: {extract_error}")
                 return JsonResponse({
                     'error': 'JSON extraction failed',
                     'message': f'Error extracting JSON objects: {str(extract_error)}',
                     'response_preview': response_text[:500]
                 }, status=500)
 
-        # Debug: Show what we parsed
-        print(f"Parsed data type: {type(data)}")
-        print(f"Parsed data: {data}")
-        
         # Handle different response structures
         if isinstance(data, str):
-            print(f"Data is a string, trying to parse it as JSON")
             try:
                 data = json.loads(data)
-                print(f"Re-parsed data type: {type(data)}")
             except json.JSONDecodeError:
                 return JsonResponse({
                     'error': 'TTN response is a string but not valid JSON',
@@ -281,14 +252,9 @@ def get_ttn_temperature(request):
                 'message': 'No uplink messages available',
                 'payload': None
             }, status=404)
-
-        print(f"Raw messages data: {messages}")
-        print(f"Messages type: {type(messages)}")
-        print(f"Messages length: {len(messages)}")
         
         # Ensure messages is a list
         if not isinstance(messages, list):
-            print(f"Messages is not a list, converting...")
             if isinstance(messages, dict):
                 messages = [messages]
             else:
@@ -297,8 +263,6 @@ def get_ttn_temperature(request):
                     'message': f'Expected list, got {type(messages)}',
                     'data_type': str(type(messages))
                 }, status=500)
-        
-        print(f"After conversion - Messages length: {len(messages)}")
         
         if len(messages) == 0:
             return JsonResponse({
@@ -316,36 +280,13 @@ def get_ttn_temperature(request):
                 timestamp = rx_metadata.get('time')
             return timestamp or ''
 
-        # Debug: Show timestamps before sorting
-        print(f"Found {len(messages)} messages")
-        for i, msg in enumerate(messages):
-            ts = get_timestamp(msg)
-            # Also show the decoded payload if available
-            decoded = msg.get('uplink_message', {}).get('decoded_payload', {})
-            temp = decoded.get('temperature', 'N/A')
-            print(f"Message {i}: timestamp = {ts}, temperature = {temp}")
-
         # Sort by timestamp descending (newest first)
         messages.sort(key=get_timestamp, reverse=True)
         
-        # Debug: Show timestamps after sorting
-        print("After sorting (newest first):")
-        for i, msg in enumerate(messages):
-            ts = get_timestamp(msg)
-            decoded = msg.get('uplink_message', {}).get('decoded_payload', {})
-            temp = decoded.get('temperature', 'N/A')
-            print(f"Message {i}: timestamp = {ts}, temperature = {temp}")
-            
         uplink = messages[0]  # newest message
-        print(f"Selected NEWEST message with timestamp: {get_timestamp(uplink)}")
-        
-        # Show what we're actually selecting
-        selected_decoded = uplink.get('uplink_message', {}).get('decoded_payload', {})
-        print(f"Selected message decoded payload: {selected_decoded}")
         
         # Check if this message has the expected structure
         if 'uplink_message' not in uplink:
-            print("Message doesn't have uplink_message structure, using message directly")
             uplink_message = uplink
         else:
             uplink_message = uplink['uplink_message']
@@ -420,10 +361,8 @@ def get_ttn_temperature(request):
                         'payload_hex': payload_bytes.hex()
                     }, status=500)
                     
-                print(f"Decoded values - Temp: {temperature}, Humidity: {humidity}, Pressure: {pressure}, Gas: {gas}")
                 
             except Exception as payload_error:
-                print(f"Error processing payload: {payload_error}")
                 return JsonResponse({
                     'error': 'Payload processing failed',
                     'message': f'Error decoding payload: {str(payload_error)}',
